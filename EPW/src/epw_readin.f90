@@ -57,7 +57,8 @@
                             title, int_mob, scissor, iterative_bte, scattering, &
                             ncarrier, carrier, scattering_serta, restart, restart_freq, &
                             scattering_0rta, longrange, shortrange, scatread, &
-                            restart_filq, prtgkk, nel, meff, epsiHEG
+                            restart_filq, prtgkk, nel, meff, epsiHEG, &
+                            omegamin, omegamax, omegastep
   USE elph2,         ONLY : elph
   USE start_k,       ONLY : nk1, nk2, nk3
   USE constants_epw, ONLY : ryd2mev, ryd2ev, ev2cmm1, kelvin2eV
@@ -279,6 +280,10 @@
   ! meff            : Density of state effective mass (in unit of the electron mass)
   ! epsiHEG         : Dielectric constant at zero doping
   !  
+  ! Added by Manos Kioupakis
+  ! omegamin, omegamax, omegastep : Photon energy minimum, maximum, and step in evaluating phonon-assisted absorption spectra (in eV)
+  !
+
   CHARACTER (LEN=80)  :: input_file
   INTEGER             :: nargs, iiarg, ierr
   !
@@ -465,6 +470,10 @@
   nel        = 0.0d0
   meff       = 1.d0
   epsiHEG    = 1.d0
+
+  omegamin   = 0.d0  ! eV
+  omegamax   = 10.d0 ! eV
+  omegastep  = 0.1d0 ! eV
   !
   !     reading the namelist inputepw
   !
@@ -647,6 +656,11 @@
   ! scissor going from eV to Ryd
   scissor = scissor / ryd2ev
   ! 
+  ! Photon energies for indirect absorption from eV to Ryd
+  omegamin = omegamin / ryd2ev
+  omegamax = omegamax / ryd2ev
+  omegastep = omegastep / ryd2ev
+  
   IF ( scattering ) THEN
     DO i = 1, ntempxx
       IF (temps(i) .gt. 0.d0) THEN

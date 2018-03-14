@@ -159,6 +159,10 @@
   REAL (KIND=DP) :: smear_rpa
   !! smearing for the calculation of the Lindhard function (in eV)
   !
+  ! Phonon-assisted absorption
+  REAL (KIND=DP) :: omegamin, omegamax, omegastep
+  !! Photon energy minimum, maximum, and step in evaluating phonon-assisted absorption spectra (in eV)
+
   !LOGICAL :: tphases
   !! tphases:  if .TRUE. set absolute reference for unitary gauge of the eigenvectors
   LOGICAL :: elecselfen

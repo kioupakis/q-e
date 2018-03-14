@@ -1244,6 +1244,37 @@
            ENDIF
            ! 
          ENDIF ! scattering
+
+
+         IF ( indabs .AND. .NOT. scattering) THEN
+           ! Apply a scissor shift to CBM if required by user
+           ! The shift is apply to k and k+q
+           !IF (scissor > 0.000001) THEN
+           IF (ABS(scissor) > 0.000001) THEN
+             IF ( noncolin ) THEN
+               icbm = FLOOR(nelec/1.0d0) +1
+             ELSE
+               icbm = FLOOR(nelec/2.0d0) +1
+             ENDIF
+             !
+             DO ik = 1, nkf
+               ikk = 2 * ik - 1
+               ikq = ikk + 1
+               DO ibnd = icbm, nbndsub
+                 etf (ibnd, ikk) = etf (ibnd, ikk) + scissor
+                 etf (ibnd, ikq) = etf (ibnd, ikq) + scissor
+               ENDDO
+             ENDDO
+             IF ( iq .eq. 1 ) THEN
+                WRITE(stdout, '(5x,"Applying a scissor shift of ",f9.5," eV to the conduction states")' ) scissor * ryd2ev
+             ENDIF
+           ENDIF
+
+           CALL indabs(iq)
+
+         END IF
+
+
          ! --------------------------------------       
          !
          CALL stop_clock ( 'ep-interp' )

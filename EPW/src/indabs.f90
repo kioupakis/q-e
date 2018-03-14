@@ -7,7 +7,7 @@
   ! present distribution, or http://www.gnu.org/copyleft.gpl.txt .             
   !                                                                            
   !-----------------------------------------------------------------------
-  SUBROUTINE indabs
+  SUBROUTINE indabs(iq)
   !-----------------------------------------------------------------------
   !! 
   !!  Phonon assisted absorption
@@ -22,11 +22,13 @@
   USE epwcom,        ONLY : nbndsub, lrepmatf, shortrange, &
                             fsthick, eptemp, ngaussw, degaussw, &
                             eps_acustic, efermi_read, fermi_energy,&
-                            restart, restart_freq
+                            restart, restart_freq, &
+                            omegamin, omegamax, omegastep
   USE pwcom,         ONLY : ef !, nelec, isk
   USE elph2,         ONLY : etf, ibndmin, ibndmax, nkqf, xqf, &
                             nkf, epf17, wkf, nqtotf, wf, wqf, xkf, nkqtotf, &
-                            sigmar_all, sigmai_all, sigmai_mode, zi_all, efnew
+                            sigmar_all, sigmai_all, sigmai_mode, zi_all, efnew, &
+                            dmef, omega, epsilon2
   USE transportcom,  ONLY : lower_bnd, upper_bnd
   USE control_flags, ONLY : iverbosity
   USE constants_epw, ONLY : ryd2mev, one, ryd2ev, two, zero, pi, ci, eps6
@@ -37,10 +39,9 @@
   !
   implicit none
   !
-  LOGICAL, INTENT (INOUT) :: first_cycle
-  !! Use to determine weather this is the first cycle after restart 
+
   INTEGER, INTENT(IN) :: iq
-  !! Q-point inde
+  !! Q-point index    
   !
   ! Local variables 
   CHARACTER (len=256) :: nameF
@@ -73,7 +74,10 @@
   !! Total number of k+q points 
   INTEGER :: i
   !! Index for reading files
-  ! 
+  
+  INTEGER :: nomega
+  !! Number of points on the photon energy axis
+ ! 
   REAL(kind=DP) :: tmp
   !! Temporary variable to store real part of Sigma for the degenerate average
   REAL(kind=DP) :: tmp2
@@ -133,6 +137,16 @@
   !! Collect k-point coordinate from all pools in parallel case
   REAL(kind=DP), ALLOCATABLE :: etf_all(:,:)
   !! Collect eigenenergies from all pools in parallel case
+
+
+  !-- Indirect absorption
+  REAL(KIND=DP) :: vkk(3,ibndmax-ibndmin+1,ibndmax-ibndmin+1)
+  REAL(KIND=DP) :: vkq(3,ibndmax-ibndmin+1,ibndmax-ibndmin+1)
+
+  COMPLEX (KIND=DP) :: S1(3), S2(3), S2e(2)
+  !! Generalized matrix elements for phonon-assisted absorption
+
+  !! Transition probability function                                                                                                                                        
   !  
   ! SP: Define the inverse so that we can efficiently multiply instead of
   ! dividing
@@ -140,177 +154,132 @@
   inv_eptemp0 = 1.0/eptemp
   inv_degaussw = 1.0/degaussw
   !
-  IF ( iq .eq. 1 ) THEN
-     !
+  nomega = INT((omegamax - omegamin)/omegastep) + 1
+
+  IF (iq .EQ. 1) THEN
      WRITE(stdout,'(/5x,a)') repeat('=',67)
-     WRITE(stdout,'(5x,"Electron (Imaginary) Self-Energy in the Migdal Approximation")')
+     WRITE(stdout,'(5x,"Phonon-assisted absorption")')
      WRITE(stdout,'(5x,a/)') repeat('=',67)
-     !
+  !
      IF ( fsthick .lt. 1.d3 ) &
-        WRITE(stdout, '(/5x,a,f10.6,a)' ) 'Fermi Surface thickness = ', fsthick * ryd2ev, ' eV'
+          WRITE(stdout, '(/5x,a,f10.6,a)' ) 'Fermi Surface thickness = ', fsthick * ryd2ev, ' eV'
      WRITE(stdout, '(/5x,a,f10.6,a)' ) &
-           'Golden Rule strictly enforced with T = ',eptemp * ryd2ev, ' eV'
+          'Temperature T = ',eptemp * ryd2ev, ' eV'
      !
-  ENDIF
-  !
-  ! Fermi level and corresponding DOS
-  !
-  IF ( efermi_read ) THEN
-    !
-    ef0 = fermi_energy
-    !
-  ELSE
-    !
-    ef0 = efnew
-    !ef0 = efermig(etf,nbndsub,nkqf,nelec,wkf,degaussw,ngaussw,0,isk)
-    ! if some bands are skipped (nbndskip.neq.0), nelec has already been recalculated 
-    ! in ephwann_shuffle
-    !
-  ENDIF
-  !
-  IF ( iq .eq. 1 ) THEN 
+     ! Fermi level and corresponding DOS
+     !
+
      WRITE (stdout, 100) degaussw * ryd2ev, ngaussw
      WRITE (stdout,'(a)') ' '
-  ENDIF
+
+     IF ( .not. ALLOCATED (omega) )    ALLOCATE(omega(nomega))
+     IF ( .not. ALLOCATED (epsilon2) ) ALLOCATE(epsilon2(3,nomega))
+     
+     epsilon2 = 0.d0
+     DO i = 1, nomega
+        omega(i) = omegamin + (i-1)*omegastep
+     END DO
+  END IF
+
+
   !
   ! The total number of k points
   !
   nksqtotf = nkqtotf/2 ! odd-even for k,k+q
   !
-  IF (restart) THEN
-    ! Make everythin 0 except the range of k-points we are working on
-    sigmar_all(:,1:lower_bnd-1) = zero
-    sigmar_all(:,lower_bnd+nkf:nkqtotf/2) = zero
-    sigmai_all(:,1:lower_bnd-1) = zero
-    sigmai_all(:,lower_bnd+nkf:nkqtotf/2) = zero
-    zi_all(:,1:lower_bnd-1) = zero
-    zi_all(:,lower_bnd+nkf:nkqtotf/2) = zero
-    ! 
-  ENDIF
-  !
-  IF ( iq .eq. 1 ) THEN 
-     IF ( .not. ALLOCATED (sigmar_all) ) ALLOCATE( sigmar_all(ibndmax-ibndmin+1, nksqtotf) )
-     IF ( .not. ALLOCATED (sigmai_all) ) ALLOCATE( sigmai_all(ibndmax-ibndmin+1, nksqtotf) )
-     IF ( .not. ALLOCATED (zi_all) )     ALLOCATE( zi_all(ibndmax-ibndmin+1, nksqtotf) )
-     IF ( iverbosity == 3 ) THEN
-       IF ( .not. ALLOCATED (sigmai_mode) ) ALLOCATE( sigmai_mode(ibndmax-ibndmin+1, nmodes, nksqtotf) )
-       sigmai_mode(:,:,:) = zero
-     ENDIF
-     sigmar_all(:,:) = zero
-     sigmai_all(:,:) = zero
-     zi_all(:,:) = zero
-  ENDIF
-  !
-  ! In the case of a restart do not add the first step
-  IF (first_cycle) THEN
-    first_cycle = .FALSE.
+  IF ( efermi_read ) THEN
+     !
+     ef0 = fermi_energy
+     !
   ELSE
-    !
-    ! loop over all k points of the fine mesh
-    !
-    fermicount = 0 
-    DO ik = 1, nkf
-       !
-       ikk = 2 * ik - 1
-       ikq = ikk + 1
-       !
-       ! here we must have ef, not ef0, to be consistent with ephwann_shuffle
-       ! (but in this case they are the same)
-       !
-       IF ( ( minval ( abs(etf (:, ikk) - ef) ) .lt. fsthick ) .and. &
-            ( minval ( abs(etf (:, ikq) - ef) ) .lt. fsthick ) ) THEN
+     !
+     ef0 = efnew
+     !ef0 = efermig(etf,nbndsub,nkqf,nelec,wkf,degaussw,ngaussw,0,isk)
+     ! if some bands are skipped (nbndskip.neq.0), nelec has already been recalculated 
+     ! in ephwann_shuffle
+     !
+  ENDIF
+     !
+
+
+
+  DO ik = 1, nkf
+     !                                                                                                                                                                   
+     ikk = 2 * ik - 1
+     ikq = ikk + 1
+     !                                                                                                                                                                   
+     IF ( ( minval ( abs(etf (:, ikk) - ef) ) .lt. fsthick ) .and. &
+          ( minval ( abs(etf (:, ikq) - ef) ) .lt. fsthick ) ) THEN
+        !
+        fermicount = fermicount + 1
+        DO imode = 1, nmodes
+           !
+           ! the phonon frequency and Bose occupation
+           wq = wf (imode, iq)
+           ! SP: Define the inverse for efficiency
+           inv_wq = 1.0/( two * wq )
+           wgq = wgauss( -wq*inv_eptemp0, -99)
+           wgq = wgq / ( one - two * wgq )
+
+           !
+           ! SP: Avoid if statement in inner loops
+           IF (wq .gt. eps_acustic) THEN
+
+
+
+
+           DO ibnd = 1, ibndmax-ibndmin+1
+           DO jbnd = 1, ibndmax-ibndmin+1
+
+
+
+        !  the energy of the electron at k (relative to Ef)
+        ekk = etf (ibndmin-1+ibnd, ikk) - ef0
+        !  the fermi occupation for k+q
+        ekq = etf (ibndmin-1+jbnd, ikq) - ef0
+        wgkq = wgauss( -ekq*inv_eptemp0, -99)  
+        !                                                                                                                                                                          ! vkk(3,nbnd) - velocity matrix elements for k and k+q                                                                                                          
+        vkk(:,ibnd,jbnd) = 2.0 * REAL (dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikk))
+        vkq(:,ibnd,jbnd) = 2.0 * REAL (dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikq))
+        ! 
+
+        
+
+
+        !-- Manos: equations for phonon-assisted absorption
+        !s1(:)  = s1(:) + epf(mbnd, jbnd) * 0.5 * vmef(:,ibnd, mbnd, ikk)  / &
+        !     (  etf(ibndmin-1+mbnd, ikk)  - etf(ibndmin-1+ibnd, ikk) - omegaph+ ci * lifetimek)
+        !s2(:) =  s2(:) + epf(ibnd, mbnd) * 0.5 * vmef(:,mbnd, jbnd, ikq)   / &
+        !     (  etf(ibndmin-1+mbnd, ikq)  - etf(ibndmin-1+ibnd, ikk) - wq+ ci * lifetimeq)
+        !s2e(:) =  s2e(:) + epf(ibnd, mbnd) * 0.5 * vmef(:,mbnd, jbnd, ikq)   / &
+        !     (  etf(ibndmin-1+mbnd, ikq)  - etf(ibndmin-1+ibnd, ikk) + wq+ ci * lifetimeq)
+                                                                                                                                                              
+     ENDDO
+     ENDDO
+
+  END IF
+
+ENDDO !imode
           !
-          fermicount = fermicount + 1
-          DO imode = 1, nmodes
-             !
-             ! the phonon frequency and Bose occupation
-             wq = wf (imode, iq)
-             ! SP: Define the inverse for efficiency
-             inv_wq = 1.0/( two * wq )
-             wgq = wgauss( -wq*inv_eptemp0, -99)
-             wgq = wgq / ( one - two * wgq )
-             !
-             ! SP: Avoid if statement in inner loops
-             IF (wq .gt. eps_acustic) THEN
-               g2_tmp = 1.0
-             ELSE
-               g2_tmp = 0.0
-             ENDIF
-             !
-             DO ibnd = 1, ibndmax-ibndmin+1
-                !
-                !  the energy of the electron at k (relative to Ef)
-                ekk = etf (ibndmin-1+ibnd, ikk) - ef0
-                !
-                DO jbnd = 1, ibndmax-ibndmin+1
-                   !
-                   !  the fermi occupation for k+q
-                   ekq = etf (ibndmin-1+jbnd, ikq) - ef0
-                   wgkq = wgauss( -ekq*inv_eptemp0, -99)  
-                   !
-                   ! here we take into account the zero-point sqrt(hbar/2M\omega)
-                   ! with hbar = 1 and M already contained in the eigenmodes
-                   ! g2 is Ry^2, wkf must already account for the spin factor
-                   !
-                   IF ( shortrange .AND. ( abs(xqf (1, iq))> eps2 .OR. abs(xqf (2, iq))> eps2 &
-                      .OR. abs(xqf (3, iq))> eps2 )) THEN                         
-                     ! SP: The abs has to be removed. Indeed the epf17 can be a pure imaginary 
-                     !     number, in which case its square will be a negative number. 
-                     g2 = (epf17 (jbnd, ibnd, imode, ik)**two)*inv_wq*g2_tmp
-                   ELSE
-                     g2 = (abs(epf17 (jbnd, ibnd, imode, ik))**two)*inv_wq*g2_tmp
-                   ENDIF        
-                   !
-                   ! There is a sign error for wq in Eq. 9 of Comp. Phys. Comm. 181, 2140 (2010). - RM
-                   ! The sign was corrected according to Eq. (7.282) page 489 from Mahan's book 
-                   ! (Many-Particle Physics, 3rd edition)
-                   ! 
-                   weight = wqf(iq) * real (                                                   &
-                           ( (       wgkq + wgq ) / ( ekk - ( ekq - wq ) - ci * degaussw )  +  &
-                             ( one - wgkq + wgq ) / ( ekk - ( ekq + wq ) - ci * degaussw ) ) )
-!                     ecutse needs to be defined if it's used 
-!@                    if ( abs(ekq-ekk) .gt. ecutse ) weight = 0.d0
-                   !
-                   sigmar_all(ibnd,ik+lower_bnd-1) = sigmar_all(ibnd,ik+lower_bnd-1) + g2 * weight
-                   !
-                   ! Logical implementation
-!                   weight = wqf(iq) * aimag (                                                  &
-!                           ( (       wgkq + wgq ) / ( ekk - ( ekq - wq ) - ci * degaussw )  +  &
-!                             ( one - wgkq + wgq ) / ( ekk - ( ekq + wq ) - ci * degaussw ) ) ) 
-!@                   if ( abs(ekq-ekk) .gt. ecutse ) weight = 0.d0
-                   !
-                   ! Delta implementation 
-                   w0g1=w0gauss( (ekk-ekq+wq)/degaussw, 0) /degaussw
-                   w0g2=w0gauss( (ekk-ekq-wq)/degaussw, 0) /degaussw
-                   weight = pi * wqf(iq) * ( (wgkq+wgq)*w0g1 + (one-wgkq+wgq)*w0g2 )
-                   !
-                   sigmai_all(ibnd,ik+lower_bnd-1) = sigmai_all(ibnd,ik+lower_bnd-1) + g2 * weight
-                   !
-                   ! Mode-resolved
-                   IF (iverbosity == 3) THEN
-                     sigmai_mode(ibnd,imode,ik+lower_bnd-1) = sigmai_mode(ibnd,imode,ik+lower_bnd-1) + g2 * weight
-                   ENDIF
-                   !
-                   ! Z FACTOR: -\frac{\partial\Re\Sigma}{\partial\omega}
-                   !
-                   weight = wqf(iq) * &
-                           ( (       wgkq + wgq ) * ( (ekk - ( ekq - wq ))**two - degaussw**two ) /       &
-                                                    ( (ekk - ( ekq - wq ))**two + degaussw**two )**two +  &
-                             ( one - wgkq + wgq ) * ( (ekk - ( ekq + wq ))**two - degaussw**two ) /       &
-                                                    ( (ekk - ( ekq + wq ))**two + degaussw**two )**two )  
-!@                   if ( abs(ekq-ekk) .gt. ecutse ) weight = 0.d0
-                   !
-                   zi_all(ibnd,ik+lower_bnd-1) = zi_all(ibnd,ik+lower_bnd-1) + g2 * weight
-                   ! 
-                ENDDO !jbnd
-                !
-             ENDDO !ibnd
-             !
-          ENDDO !imode
-          !
-       ENDIF ! endif  fsthick
+ENDIF ! endif  fsthick
        !
-    ENDDO ! end loop on k
+ENDDO ! end loop on k
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     !
     ! Creation of a restart point
     IF (restart) THEN
