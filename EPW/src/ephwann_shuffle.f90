@@ -40,7 +40,7 @@
                             scattering, nstemp, int_mob, scissor, carrier,      &
                             iterative_bte, longrange, scatread, nqf1, prtgkk,   &
                             nqf2, nqf3, mp_mesh_k, restart, ncarrier, plselfen, &
-                            specfun_pl
+                            specfun_pl, lindabs
   USE noncollin_module, ONLY : noncolin
   USE constants_epw, ONLY : ryd2ev, ryd2mev, one, two, eps2, eps4, zero, czero, &
                             twopi, ci, kelvin2eV
@@ -1246,7 +1246,7 @@
          ENDIF ! scattering
 
 
-         IF ( indabs .AND. .NOT. scattering) THEN
+         IF ( lindabs .AND. .NOT. scattering) THEN
            ! Apply a scissor shift to CBM if required by user
            ! The shift is apply to k and k+q
            !IF (scissor > 0.000001) THEN

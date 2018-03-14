@@ -264,6 +264,8 @@
   !! if .true. read from file Delta and Znorm on the imaginary-axis
   LOGICAL :: eliashberg
   !! if .true. solve the Eliashberg equations 
+  LOGICAL :: lindabs
+  !! if .true., perform phonon-assisted absorption calculations
   !
   ! Conductivity
   LOGICAL :: scattering
