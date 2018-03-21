@@ -9,7 +9,7 @@
 #FFLAGS = 
 
 # gfortran compiler
-FC = gfortran
+FC = /opt/local/bin/gfortran-mp-7
 LD = $(FC) 
 FFLAGS = 
 

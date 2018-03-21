@@ -24,14 +24,14 @@
   PUBLIC :: lambda_phself, linewidth_phself, linewidth_elself, iospectral, &
             iua2ffil, iudosfil, iufillambda, iuqdos, iufe, iufilker, &
             iufilgap, iospectral_sup, iua2ftrfil, iufilgapFS, iufillambdaFS, &
-            iospectral_cum, iuwanep, iuwane, iunukk, iudvscf, QPeig_read
+            iospectral_cum, iuwanep, iuwane, iunukk, iudvscf, QPeig_read, iures
   PUBLIC :: epwdata, iundmedata, iunvmedata, iunksdata, iudyn, iukgmap, iuepb,&
             iufilfreq, iufilegnv, iufileph, iufilkqmap, &
             iufilikmap, iueig, iunepmatwp, iunepmatwe, iunkf, iunqf, &
             iufileig, iukmap, crystal, iunifc, iunimem, iunepmatwp2
   PUBLIC :: iuwinfil, iun_plot, iuukk, iuprojfil !, iummn
   PUBLIC :: iufilsigma, iufilseebeck, iufilkappael, iufilkappa, iufilscatt_rate,&
-            iufilFi_all, iufilsigma_all, iufiltau_all
+            iufilFi_all, iufilsigma_all, iufiltau_all, iuindabs
   !
   ! Output of physically relevant quantities (60-100)
   !    
@@ -61,6 +61,7 @@
                                    ! [specfun_cum##.elself]
 !DBSP : iukgmap was 96. Should be the same as set_kplusq.f90. 
   INTEGER :: iunukk          = 77  ! Unit with rotation matrix U(k) from wannier code
+  INTEGER :: iures           = 78  ! Resistivity in metals using Ziman formula [.res]
   INTEGER :: iudvscf         = 80  ! Unit for the dvscf_q file
   INTEGER :: iudyn           = 81  ! Unit for the dynamical matrix file
   INTEGER :: iufilkqmap      = 82  ! Map of k+q
@@ -125,5 +126,7 @@
   INTEGER :: iufilFi_all     = 256 ! Fi_all file to retart at X iteration
   INTEGER :: iufilsigma_all  = 257 ! Sigmar_all and Sigmai_all file to retart an interpolation
   INTEGER :: iufiltau_all    = 258 ! inv_tau_all file to retart an interpolation
+  
+  INTEGER :: iuindabs           = 666 ! Absorption
   !
 END MODULE io_epw

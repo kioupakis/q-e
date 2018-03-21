@@ -58,7 +58,7 @@
                             ncarrier, carrier, scattering_serta, restart, restart_freq, &
                             scattering_0rta, longrange, shortrange, scatread, &
                             restart_filq, prtgkk, nel, meff, epsiHEG, &
-                            omegamin, omegamax, omegastep
+                            omegamin, omegamax, omegastep, n_r, lindabs
   USE elph2,         ONLY : elph
   USE start_k,       ONLY : nk1, nk2, nk3
   USE constants_epw, ONLY : ryd2mev, ryd2ev, ev2cmm1, kelvin2eV
@@ -122,7 +122,8 @@
        specfun_el, specfun_ph, wmin_specfun, wmax_specfun, nw_specfun,         & 
        delta_approx, scattering, int_mob, scissor, ncarrier, carrier,          &
        iterative_bte, scattering_serta, scattering_0rta, longrange, shortrange,&
-       scatread, restart, restart_freq, restart_filq, prtgkk, nel, meff, epsiHEG
+       scatread, restart, restart_freq, restart_filq, prtgkk, nel, meff, epsiHEG,&
+       omegamin, omegamax, omegastep, n_r, lindabs
 
   ! tphases, fildvscf0
   !
@@ -282,7 +283,8 @@
   !  
   ! Added by Manos Kioupakis
   ! omegamin, omegamax, omegastep : Photon energy minimum, maximum, and step in evaluating phonon-assisted absorption spectra (in eV)
-  !
+  ! n_r :  constant refractive index
+  ! lindabs : do phonon-assisted absorption
 
   CHARACTER (LEN=80)  :: input_file
   INTEGER             :: nargs, iiarg, ierr
@@ -474,6 +476,8 @@
   omegamin   = 0.d0  ! eV
   omegamax   = 10.d0 ! eV
   omegastep  = 0.1d0 ! eV
+  n_r        = 1.0
+  lindabs = .false.
   !
   !     reading the namelist inputepw
   !

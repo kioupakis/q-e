@@ -17,34 +17,34 @@
   !-----------------------------------------------------------------------
   USE kinds,         ONLY : DP
   USE io_global,     ONLY : stdout
-  USE io_epw,        ONLY : linewidth_elself
+  USE io_epw,        ONLY : iuindabs
   USE phcom,         ONLY : nmodes
   USE epwcom,        ONLY : nbndsub, lrepmatf, shortrange, &
                             fsthick, eptemp, ngaussw, degaussw, &
                             eps_acustic, efermi_read, fermi_energy,&
                             restart, restart_freq, &
-                            omegamin, omegamax, omegastep
+                            omegamin, omegamax, omegastep, n_r, scissor
   USE pwcom,         ONLY : ef !, nelec, isk
   USE elph2,         ONLY : etf, ibndmin, ibndmax, nkqf, xqf, &
                             nkf, epf17, wkf, nqtotf, wf, wqf, xkf, nkqtotf, &
                             sigmar_all, sigmai_all, sigmai_mode, zi_all, efnew, &
-                            dmef, omega, epsilon2
+                            dmef, omegap, alpha_abs, vmef, etf_ks
   USE transportcom,  ONLY : lower_bnd, upper_bnd
   USE control_flags, ONLY : iverbosity
-  USE constants_epw, ONLY : ryd2mev, one, ryd2ev, two, zero, pi, ci, eps6
+  USE constants_epw, ONLY : ryd2mev, one, ryd2ev, two, zero, pi, ci, eps6, czero
   USE mp,            ONLY : mp_barrier, mp_sum
   USE mp_global,     ONLY : inter_pool_comm
   USE mp_world,      ONLY : mpime
   USE io_global,     ONLY : ionode_id
+  USE cell_base,     ONLY : omega
   !
   implicit none
   !
-
   INTEGER, INTENT(IN) :: iq
   !! Q-point index    
   !
   ! Local variables 
-  CHARACTER (len=256) :: nameF
+  CHARACTER (len=256) :: nameF='indabs.dat'
   !! Name of the file
   !
   LOGICAL :: opnd
@@ -74,10 +74,14 @@
   !! Total number of k+q points 
   INTEGER :: i
   !! Index for reading files
-  
+  INTEGER :: iw
+  !! Index for frequency
   INTEGER :: nomega
   !! Number of points on the photon energy axis
- ! 
+  INTEGER :: mbnd
+  !! Index for summation over intermediate bands
+
+
   REAL(kind=DP) :: tmp
   !! Temporary variable to store real part of Sigma for the degenerate average
   REAL(kind=DP) :: tmp2
@@ -98,18 +102,23 @@
   !! Eigen energy on the fine grid relative to the Fermi level
   REAL(kind=DP) :: ekq
   !! Eigen energy of k+q on the fine grid relative to the Fermi level
-  REAL(kind=DP) :: wq
-  !! Phonon frequency on the fine grid
+
+  REAL(kind=DP) :: ekmk
+  !! Eigen energy on the fine grid relative to the Fermi level for the intermediate band
+  REAL(kind=DP) :: ekmq
+  !! Eigen energy of k+q on the fine grid relative to the Fermi level for the intermediate band
+
+
+  REAL(kind=DP) :: wq(nmodes), nqv(nmodes)
+  !! Phonon frequencies and phonon occupations on the fine grid
   REAL(kind=DP) :: ef0
   !! Fermi energy level
   REAL(kind=DP) :: wgq
   !! Bose occupation factor $n_{q\nu}(T)$
-  REAL(kind=DP) :: wgkq
-  !! Fermi-Dirac occupation factor $f_{nk+q}(T)$
-  REAL(kind=DP) :: weight
-  !! Self-energy factor 
-  !!$$ N_q \Re( \frac{f_{mk+q}(T) + n_{q\nu}(T)}{ \varepsilon_{nk} - \varepsilon_{mk+q} + \omega_{q\nu} - i\delta }) $$ 
-  !!$$ + N_q \Re( \frac{1- f_{mk+q}(T) + n_{q\nu}(T)}{ \varepsilon_{nk} - \varepsilon_{mk+q} - \omega_{q\nu} - i\delta }) $$ 
+  REAL(kind=DP) :: wgkk, wgkq
+  !! Fermi-Dirac occupation factor $f_{nk+q}(T)$, $f_{nk}(T)$
+  REAL(kind=DP) :: weighta, weighte
+  !!- delta function for absorption, emission
   REAL(kind=DP) :: w0g1
   !! Dirac delta for the imaginary part of $\Sigma$
   REAL(kind=DP) :: w0g2
@@ -139,11 +148,20 @@
   !! Collect eigenenergies from all pools in parallel case
 
 
-  !-- Indirect absorption
-  REAL(KIND=DP) :: vkk(3,ibndmax-ibndmin+1,ibndmax-ibndmin+1)
-  REAL(KIND=DP) :: vkq(3,ibndmax-ibndmin+1,ibndmax-ibndmin+1)
 
-  COMPLEX (KIND=DP) :: S1(3), S2(3), S2e(2)
+  !-- Indirect absorption
+  COMPLEX(KIND=DP) :: vkk(3,ibndmax-ibndmin+1,ibndmax-ibndmin+1)
+  COMPLEX(KIND=DP) :: vkq(3,ibndmax-ibndmin+1,ibndmax-ibndmin+1)
+  !!- Velocity matrix elements at k, k+q
+  REAL(KIND=DP) :: pfac, pface
+  !!-- Occupation prefactors
+  REAL(KIND=DP) :: cfac
+  !!- Absorption prefactor
+  INTEGER :: ipol
+  !!-- polarization direction
+
+
+  COMPLEX (KIND=DP) :: s1a(3), s1e(3), s2a(3), s2e(3), epf(ibndmax-ibndmin+1, ibndmax-ibndmin+1,nmodes)
   !! Generalized matrix elements for phonon-assisted absorption
 
   !! Transition probability function                                                                                                                                        
@@ -156,6 +174,17 @@
   !
   nomega = INT((omegamax - omegamin)/omegastep) + 1
 
+  ! 300 K                                                                                                                                        
+  ! WRONG? C = 4 * pi^2 * 2 *2^2 / (nr * 137*2)                                                                                                         
+  ! WRONG? C = 16 pi^2/137 * 1/nr = 1.1523518/nr  
+  ! CORRECT C = 4*pi^2*e^2 / (n_r c m_e^2) * 2 = 4 * pi^2 * 2 *2^2 *2 / (nr * 137*2) = 32/ (nr*137) = 2*1.15235180919/n_r
+
+  cfac = two*1.15235180919/n_r 
+
+
+
+
+  ! 
   IF (iq .EQ. 1) THEN
      WRITE(stdout,'(/5x,a)') repeat('=',67)
      WRITE(stdout,'(5x,"Phonon-assisted absorption")')
@@ -165,23 +194,15 @@
           WRITE(stdout, '(/5x,a,f10.6,a)' ) 'Fermi Surface thickness = ', fsthick * ryd2ev, ' eV'
      WRITE(stdout, '(/5x,a,f10.6,a)' ) &
           'Temperature T = ',eptemp * ryd2ev, ' eV'
-     !
-     ! Fermi level and corresponding DOS
-     !
 
-     WRITE (stdout, 100) degaussw * ryd2ev, ngaussw
-     WRITE (stdout,'(a)') ' '
-
-     IF ( .not. ALLOCATED (omega) )    ALLOCATE(omega(nomega))
-     IF ( .not. ALLOCATED (epsilon2) ) ALLOCATE(epsilon2(3,nomega))
+     IF ( .not. ALLOCATED (omegap) )    ALLOCATE(omegap(nomega))
+     IF ( .not. ALLOCATED (alpha_abs) ) ALLOCATE(alpha_abs(3,nomega))
      
-     epsilon2 = 0.d0
-     DO i = 1, nomega
-        omega(i) = omegamin + (i-1)*omegastep
+     alpha_abs = 0.d0
+     DO iw = 1, nomega
+        omegap(iw) = omegamin + (iw-1)*omegastep
      END DO
   END IF
-
-
   !
   ! The total number of k points
   !
@@ -199,261 +220,169 @@
      ! in ephwann_shuffle
      !
   ENDIF
-     !
-
-
-
+  ! 
   DO ik = 1, nkf
-     !                                                                                                                                                                   
-     ikk = 2 * ik - 1
-     ikq = ikk + 1
-     !                                                                                                                                                                   
-     IF ( ( minval ( abs(etf (:, ikk) - ef) ) .lt. fsthick ) .and. &
-          ( minval ( abs(etf (:, ikq) - ef) ) .lt. fsthick ) ) THEN
-        !
-        fermicount = fermicount + 1
-        DO imode = 1, nmodes
-           !
-           ! the phonon frequency and Bose occupation
-           wq = wf (imode, iq)
-           ! SP: Define the inverse for efficiency
-           inv_wq = 1.0/( two * wq )
-           wgq = wgauss( -wq*inv_eptemp0, -99)
-           wgq = wgq / ( one - two * wgq )
-
-           !
-           ! SP: Avoid if statement in inner loops
-           IF (wq .gt. eps_acustic) THEN
+    !                                                                                                                                                                   
+    ikk = 2 * ik - 1
+    ikq = ikk + 1
+    !                                                                                                                                                                   
 
 
+    DO imode = 1, nmodes
+       !                                                                                                                                                                
+       ! the phonon frequency at this q and nu                                                                                                                          
+       wq(imode) = wf (imode, iq)
+       ! 
+       epf(:,:,imode) = epf17(:, :, imode,ik)
+       IF ( wq(imode) .gt. eps_acustic ) THEN
+          nqv(imode) = wgauss( -wq(imode)/(eptemp), -99)
+          nqv(imode) = nqv(imode) / ( one - two * nqv(imode) )
+       END IF
+    END DO
 
 
-           DO ibnd = 1, ibndmax-ibndmin+1
-           DO jbnd = 1, ibndmax-ibndmin+1
+    DO ibnd = 1, ibndmax-ibndmin+1
+       DO jbnd = 1, ibndmax-ibndmin+1
+             
+          IF (ABS(scissor) > 0.000001 .AND. &
+               ABS( etf_ks(ibndmin-1+ibnd,ikk)-etf_ks(ibndmin-1+jbnd,ikk)) > 0.000001 .AND. &
+               ABS( etf_ks(ibndmin-1+ibnd,ikq)-etf_ks(ibndmin-1+jbnd,ikq)) > 0.000001 ) THEN
+             vkk(:,ibnd,jbnd) = 2.0 * dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikk) &
+                  *( etf(ibndmin-1+ibnd,ikk)-etf(ibndmin-1+jbnd,ikk))/( etf_ks(ibndmin-1+ibnd,ikk)-etf_ks(ibndmin-1+jbnd,ikk))
+             vkq(:,ibnd,jbnd) = 2.0 * dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikq) &
+                  *( etf(ibndmin-1+ibnd,ikq)-etf(ibndmin-1+jbnd,ikq))/( etf_ks(ibndmin-1+ibnd,ikq)-etf_ks(ibndmin-1+jbnd,ikq))
+          ELSE
+             vkk(:,ibnd,jbnd) = 2.0 * dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikk) 
+             vkq(:,ibnd,jbnd) = 2.0 * dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikq) 
+          END IF
+       END DO
+    END DO
+    
 
-
-
-        !  the energy of the electron at k (relative to Ef)
-        ekk = etf (ibndmin-1+ibnd, ikk) - ef0
-        !  the fermi occupation for k+q
-        ekq = etf (ibndmin-1+jbnd, ikq) - ef0
-        wgkq = wgauss( -ekq*inv_eptemp0, -99)  
-        !                                                                                                                                                                          ! vkk(3,nbnd) - velocity matrix elements for k and k+q                                                                                                          
-        vkk(:,ibnd,jbnd) = 2.0 * REAL (dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikk))
-        vkq(:,ibnd,jbnd) = 2.0 * REAL (dmef (:, ibndmin-1+ibnd, ibndmin-1+jbnd, ikq))
-        ! 
-
-        
-
-
-        !-- Manos: equations for phonon-assisted absorption
-        !s1(:)  = s1(:) + epf(mbnd, jbnd) * 0.5 * vmef(:,ibnd, mbnd, ikk)  / &
-        !     (  etf(ibndmin-1+mbnd, ikk)  - etf(ibndmin-1+ibnd, ikk) - omegaph+ ci * lifetimek)
-        !s2(:) =  s2(:) + epf(ibnd, mbnd) * 0.5 * vmef(:,mbnd, jbnd, ikq)   / &
-        !     (  etf(ibndmin-1+mbnd, ikq)  - etf(ibndmin-1+ibnd, ikk) - wq+ ci * lifetimeq)
-        !s2e(:) =  s2e(:) + epf(ibnd, mbnd) * 0.5 * vmef(:,mbnd, jbnd, ikq)   / &
-        !     (  etf(ibndmin-1+mbnd, ikq)  - etf(ibndmin-1+ibnd, ikk) + wq+ ci * lifetimeq)
-                                                                                                                                                              
-     ENDDO
-     ENDDO
-
-  END IF
-
-ENDDO !imode
-          !
-ENDIF ! endif  fsthick
+!    IF ( ( minval ( abs(etf (:, ikk) - ef0) ) .lt. fsthick ) .and. &
+!         ( minval ( abs(etf (:, ikq) - ef0) ) .lt. fsthick ) ) THEN
        !
-ENDDO ! end loop on k
+!       fermicount = fermicount + 1
+       
+       
 
 
 
+       DO ibnd = 1, ibndmax-ibndmin+1
+          !  the energy of the electron at k (relative to Ef)
+          ekk = etf (ibndmin-1+ibnd, ikk) - ef0
+          IF ( abs(ekk) .lt. fsthick ) THEN
+
+          wgkk = wgauss( -ekk*inv_eptemp0, -99)  
+
+          DO jbnd = 1, ibndmax-ibndmin+1
+
+             !  the fermi occupation for k+q
+             ekq = etf (ibndmin-1+jbnd, ikq) - ef0
+             IF ( abs(ekq) .lt. fsthick .AND. ekq .LT. ekk+wq(nmodes)+omegamax +6.0*degaussw ) THEN
+             wgkq = wgauss( -ekq*inv_eptemp0, -99)  
+             ! vkk(3,nbnd) - velocity matrix elements for k and k+q                                                                                                          
+             
+             IF ( ekq-ekk-wq(nmodes)-omegamax .GT. 6.0*degaussw ) CYCLE 
+             IF ( ekq-ekk+wq(nmodes)-omegamin .LT. 6.0*degaussw ) CYCLE 
+
+             DO imode = 1, nmodes
+
+                IF ( wq(imode) .gt. eps_acustic ) THEN
+                
+                   s1a = czero
+                   s1e = czero
+                   s2a = czero
+                   s2e = czero
+                
+                   DO mbnd = 1, ibndmax-ibndmin+1
+                      !  the energy of the electron at k (relative to Ef)
+                      ekmk = etf (ibndmin-1+mbnd, ikk) - ef0
+                      !  the fermi occupation for k+q
+                      ekmq = etf (ibndmin-1+mbnd, ikq) - ef0
+                      s1a(:)  = s1a(:) + epf(mbnd, jbnd,imode) * 0.5 * vkk(:,ibnd, mbnd)  / &
+                           (  ekmk  - ekq + wq(imode) + ci * degaussw )
+                      s1e(:)  = s1e(:) + epf(mbnd, jbnd,imode) * 0.5 * vkk(:,ibnd, mbnd)  / &
+                           (  ekmk  - ekq - wq(imode) + ci * degaussw )
+                      s2a(:) =  s2a(:) + epf(ibnd, mbnd,imode) * 0.5 * vkq(:,mbnd, jbnd)   / &
+                           (  ekmq  - ekk - wq(imode)+ ci * degaussw)
+                      s2e(:) =  s2e(:) + epf(ibnd, mbnd,imode) * 0.5 * vkq(:,mbnd, jbnd)   / &
+                           (  ekmq  - ekk + wq(imode)+ ci * degaussw)
+                   END DO
+
+                      
+!                   pfac =   nqv(imode)      * ( wgkk - wgkq )
+!                   pface = (nqv(imode) + 1) * ( wgkk - wgkq )
+
+                   pfac  =  nqv(imode)      * wgkk *(one- wgkq ) - (nqv(imode)+one)*(one-wgkk) * wgkq 
+                   pface = (nqv(imode)+one) * wgkk *(one- wgkq ) -  nqv(imode)     *(one-wgkk) * wgkq
+                   
+                   DO iw = 1, nomega
+
+                      IF ( ABS(ekq-ekk-wq(imode)-omegap(iw)) .GT. 6.0*degaussw .AND. &
+                           ABS(ekq-ekk+wq(imode)-omegap(iw)) .GT. 6.0*degaussw) CYCLE
+                      weighte = w0gauss( ( ekq - ekk - omegap(iw) + wq(imode))  / degaussw, 0) / degaussw
+                      weighta = w0gauss( ( ekq - ekk - omegap(iw) - wq(imode))  / degaussw, 0) / degaussw
+
+                      DO ipol = 1, 3
+                         alpha_abs(ipol,iw) = alpha_abs(ipol,iw)  + &
+                              (wkf(ikk)/2.0) * wqf(iq) * &
+                              cfac / omegap(iw) * pfac  * weighta * abs( s1a(ipol) + s2a(ipol) )**2 / (2 * wq(imode) * omega )
+                         alpha_abs(ipol,iw) = alpha_abs(ipol,iw)  + &
+                              (wkf(ikk)/2.0) * wqf(iq) * &
+                              cfac / omegap(iw) * pface * weighte * abs( s1e(ipol) + s2e(ipol) )**2 / (2 * wq(imode) * omega )
+
+!                      alpha_abs(ipol,iw)=alpha_abs(ipol,iw) &
+!                           + wkf(ikk) * wqf(iq)/2.0 *weighta*pfac*cfac * abs( s1(ipol) + s2e(ipol) )**2 &
+!                           / (omegap(iw) * 2 * wq(imode) * omega )   
+!                           !/ (omegap(iw) * 2 * omega )   
+                      END DO
+                      
+                   END DO
+                END IF
+             END DO
 
 
+          END IF ! endif  ekq in fsthick
+
+       END DO
+    END IF  ! endif  ekk in fsthick
+
+ END DO
+ENDDO
+       
 
 
-
-
-
-
-
-
-
-
-
-    !
-    ! Creation of a restart point
-    IF (restart) THEN
-      IF (MOD(iq,restart_freq) == 0) THEN
-        WRITE(stdout, '(a)' ) '     Creation of a restart point'
-        ! 
-        CALL mp_sum( sigmar_all, inter_pool_comm )
-        CALL mp_sum( sigmai_all, inter_pool_comm )
-        CALL mp_sum( zi_all, inter_pool_comm )
-        CALL mp_sum(fermicount, inter_pool_comm)
-        CALL mp_barrier(inter_pool_comm)
-        !
-        CALL electron_write(iq,nqtotf,nksqtotf,sigmar_all,sigmai_all,zi_all)
-        ! 
-      ENDIF
-    ENDIF 
-  ENDIF ! in case of restart, do not do the first one
   !
   ! The k points are distributed among pools: here we collect them
   !
   IF ( iq .eq. nqtotf ) THEN
     !
-    ALLOCATE ( xkf_all      ( 3,       nkqtotf ), &
-               etf_all      ( nbndsub, nkqtotf ) )
-    xkf_all(:,:) = zero
-    etf_all(:,:) = zero
     !
 #if defined(__MPI)
     !
     ! note that poolgather2 works with the doubled grid (k and k+q)
     !
-    CALL poolgather2 ( 3,       nkqtotf, nkqf, xkf,    xkf_all  )
-    CALL poolgather2 ( nbndsub, nkqtotf, nkqf, etf,    etf_all  )
-    CALL mp_sum( sigmar_all, inter_pool_comm )
-    CALL mp_sum( sigmai_all, inter_pool_comm )
-    IF (iverbosity == 3) CALL mp_sum( sigmai_mode, inter_pool_comm )
-    CALL mp_sum( zi_all, inter_pool_comm )
-    CALL mp_sum(fermicount, inter_pool_comm)
+    CALL mp_barrier(inter_pool_comm)
+    CALL mp_sum( alpha_abs, inter_pool_comm )
     CALL mp_barrier(inter_pool_comm)
     !
-#else
-    !
-    xkf_all = xkf
-    etf_all = etf
-    !
+
+
 #endif
-    !
-    ! Average over degenerate eigenstates:
-    WRITE(stdout,'(5x,"Average over degenerate eigenstates is performed")')
-    ! 
-    DO ik = 1, nksqtotf
-      ikk = 2 * ik - 1
-      ikq = ikk + 1
-      ! 
-      DO ibnd = 1, ibndmax-ibndmin+1
-        ekk = etf_all (ibndmin-1+ibnd, ikk)
-        n = 0
-        tmp = 0.0_DP
-        tmp2 = 0.0_DP
-        tmp3 = 0.0_DP
-        DO jbnd = 1, ibndmax-ibndmin+1
-          ekk2 = etf_all (ibndmin-1+jbnd, ikk) 
-          IF ( ABS(ekk2-ekk) < eps6 ) THEN
-            n = n + 1
-            tmp =  tmp + sigmar_all (jbnd,ik)
-            tmp2 =  tmp2 + sigmai_all (jbnd,ik)
-            tmp3 =  tmp3 + zi_all (jbnd,ik)
-          ENDIF
-          !
-        ENDDO ! jbnd
-        sigmar_tmp(ibnd) = tmp / float(n)
-        sigmai_tmp(ibnd) = tmp2 / float(n)
-        zi_tmp(ibnd) = tmp3 / float(n)
-        !
-      ENDDO ! ibnd
-      sigmar_all (:,ik) = sigmar_tmp(:) 
-      sigmai_all (:,ik) = sigmai_tmp(:)
-      zi_all (:,ik)  = zi_tmp(:)
-      ! 
-    ENDDO ! nksqtotf
-    !  
-    ! Output electron SE here after looping over all q-points (with their contributions 
-    ! summed in sigmar_all, etc.)
-    !
-    WRITE(stdout,'(5x,"WARNING: only the eigenstates within the Fermi window are meaningful")')
-    !
-    IF (mpime.eq.ionode_id) THEN
-      ! Write to file
-      OPEN(unit=linewidth_elself,file='linewidth.elself')
-      WRITE(linewidth_elself, '(a)') '# Electron lifetime (meV)'
-      IF ( iverbosity == 3 ) THEN
-        WRITE(linewidth_elself, '(a)') '#      ik       ibnd                 E(ibnd)      imode          Im(Sgima)(meV)'
-      ELSE
-        WRITE(linewidth_elself, '(a)') '#      ik       ibnd                 E(ibnd)      Im(Sgima)(meV)'
-      ENDIF
-      ! 
-      DO ik = 1, nksqtotf
-         !
-         ikk = 2 * ik - 1
-         ikq = ikk + 1
-         !
-         WRITE(stdout,'(/5x,"ik = ",i7," coord.: ", 3f12.7)') ik, xkf_all(:,ikk)
-         WRITE(stdout,'(5x,a)') repeat('-',67)
-         !
-         DO ibnd = 1, ibndmax-ibndmin+1
-           !
-           ! note that ekk does not depend on q 
-           ekk = etf_all (ibndmin-1+ibnd, ikk) - ef0
-           !
-           ! calculate Z = 1 / ( 1 -\frac{\partial\Sigma}{\partial\omega} )
-           zi_all (ibnd,ik) = one / ( one + zi_all (ibnd,ik) )
-           !
-           WRITE(stdout, 102) ibndmin-1+ibnd, ryd2ev * ekk, ryd2mev * sigmar_all (ibnd,ik), &
-                              ryd2mev * sigmai_all (ibnd,ik), zi_all (ibnd,ik), one/zi_all(ibnd,ik)-one
-!           WRITE(stdout, 103) ik, ryd2ev * ekk, ryd2mev * sigmar_all (ibnd,ik), &
-!                              ryd2mev * sigmai_all (ibnd,ik), zi_all (ibnd,ik)
-           IF ( iverbosity == 3 ) THEN
-             DO imode=1, nmodes
-               WRITE(linewidth_elself,'(i9,2x)',advance='no') ik
-               WRITE(linewidth_elself,'(i9,2x)',advance='no') ibndmin-1+ibnd
-               WRITE(linewidth_elself,'(E22.14,2x)',advance='no') ryd2ev * ekk
-               WRITE(linewidth_elself,'(i9,2x)',advance='no') imode
-               WRITE(linewidth_elself,'(E22.14,2x)') ryd2mev*sigmai_mode(ibnd,imode,ik)
-             ENDDO
-           ELSE
-             WRITE(linewidth_elself,'(i9,2x)',advance='no') ik
-             WRITE(linewidth_elself,'(i9,2x)',advance='no') ibndmin-1+ibnd
-             WRITE(linewidth_elself,'(E22.14,2x)',advance='no') ryd2ev * ekk
-             WRITE(linewidth_elself,'(E22.14,2x)') ryd2mev*sigmai_all(ibnd,ik)
-           ENDIF
-           !
-         ENDDO
-         WRITE(stdout,'(5x,a/)') repeat('-',67)
-         !
-      ENDDO
-    ENDIF
-    !
-    DO ibnd = 1, ibndmax-ibndmin+1
-       !
-       DO ik = 1, nksqtotf
-          !
-          ikk = 2 * ik - 1
-          ikq = ikk + 1
-          !
-          ! note that ekk does not depend on q 
-          ekk = etf_all (ibndmin-1+ibnd, ikk) - ef0
-          !
-          ! calculate Z = 1 / ( 1 -\frac{\partial\Sigma}{\partial\omega} )
-          !zi_all (ibnd,ik) = one / ( one + zi_all (ibnd,ik) )
-          !
-          WRITE(stdout,'(2i9,5f12.4)') ik, ibndmin-1+ibnd, ryd2ev * ekk, ryd2mev * sigmar_all(ibnd,ik), &
-                                       ryd2mev * sigmai_all (ibnd,ik), zi_all (ibnd,ik),  one/zi_all(ibnd,ik)-one
-          ! 
-       ENDDO
-       !
-       WRITE(stdout,'(a)') '  '
-       !
-    ENDDO
-    !
-    CLOSE(linewidth_elself)
-    !
-    IF ( ALLOCATED(xkf_all) )      DEALLOCATE( xkf_all )
-    IF ( ALLOCATED(etf_all) )      DEALLOCATE( etf_all )
-    IF ( ALLOCATED(sigmar_all) )   DEALLOCATE( sigmar_all )
-    IF ( ALLOCATED(sigmai_all) )   DEALLOCATE( sigmai_all )
-    IF ( ALLOCATED(zi_all) )       DEALLOCATE( zi_all )
-    IF ( ALLOCATED(sigmai_mode) )   DEALLOCATE( sigmai_mode )
-    !
-  ENDIF 
-  !
-  100 FORMAT(5x,'Gaussian Broadening: ',f10.6,' eV, ngauss=',i4)
-  101 FORMAT(5x,'DOS =',f10.6,' states/spin/eV/Unit Cell at Ef=',f10.6,' eV')
-  102 FORMAT(5x,'E( ',i3,' )=',f9.4,' eV   Re[Sigma]=',f15.6,' meV Im[Sigma]=',f15.6,' meV     Z=',f15.6,' lam=',f15.6)
-  !
+
+    !  Output to file
+
+    OPEN(unit=iuindabs,file=nameF)
+    WRITE(iuindabs,'(a)') '# Phonon-assisted absorption coefficient versus energy'
+    WRITE(iuindabs,'(a)') '# Photon energy (eV), absorption coefficient (cm-1)'
+    DO iw = 1, nomega
+       !WRITE(iuindabs, '(4f12.7)') omegap(iw)*ryd2ev, (alpha_abs(ipol,iw)/0.529177E-8,ipol=1,3)
+       WRITE(iuindabs, *) omegap(iw)*ryd2ev, (alpha_abs(ipol,iw)/0.529177E-8,ipol=1,3)
+    END DO
+    CLOSE(iuindabs)
+ END IF
+
   RETURN
   !
   END SUBROUTINE indabs

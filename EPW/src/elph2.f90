@@ -78,7 +78,7 @@
        zi_allvb(:,:,:),        &!  Z-factor in scattering rate  
        zi_allcb(:,:,:),        &!  Second Z-factor in scattering rate (for both VB and CB calculations) 
        ifc(:,:,:,:,:,:,:),     &!  Interatomic force constant in real space
-       omega(:), epsilon2(:,:)  !  Photon energy and imaginary part of dielectric function for phonon-assisted absorption  
+       omegap(:), alpha_abs(:,:)  !  Photon energy and imaginary part of dielectric function for phonon-assisted absorption  
 
   REAL(KIND=DP) ::             &!
        efnew                    !  SP: Fermi level on the fine grid. Added globaly for efficiency reason 

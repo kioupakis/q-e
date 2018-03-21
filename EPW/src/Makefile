@@ -71,6 +71,7 @@ gen_freqgrid.o \
 gmap_sym.o \
 hambloch2wan.o \
 hamwan2bloch.o \
+indabs.o \
 io_dyn_mat2.o \
 kernels_aniso_iaxis.o \
 kernels_iso_iaxis.o \

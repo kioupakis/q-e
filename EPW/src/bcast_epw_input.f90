@@ -47,7 +47,9 @@
                             scattering, scattering_serta, scattering_0rta, &
                             int_mob, scissor, carrier, ncarrier, iterative_bte, &
                             restart, restart_freq, prtgkk, nel, meff, epsiHEG, &
-                            scatread, restart, restart_freq, restart_filq
+                            scatread, restart, restart_freq, restart_filq, &
+                            omegamin, omegamax, omegastep, n_r, lindabs
+
   USE elph2,         ONLY : elph 
   USE mp,            ONLY : mp_bcast
   USE mp_world,      ONLY : world_comm
@@ -130,6 +132,7 @@
   CALL mp_bcast (carrier         , meta_ionode_id, world_comm)  
   CALL mp_bcast (restart         , meta_ionode_id, world_comm)
   CALL mp_bcast (prtgkk          , meta_ionode_id, world_comm)
+  CALL mp_bcast (lindabs         , meta_ionode_id, world_comm)
   !
   ! integers
   !
@@ -195,6 +198,12 @@
   CALL mp_bcast (epsiHEG       , meta_ionode_id, world_comm)      
   CALL mp_bcast (fermi_diff    , meta_ionode_id, world_comm)
   CALL mp_bcast (smear_rpa     , meta_ionode_id, world_comm)
+
+  CALL mp_bcast (omegamin      , meta_ionode_id, world_comm)
+  CALL mp_bcast (omegamax      , meta_ionode_id, world_comm)
+  CALL mp_bcast (omegastep     , meta_ionode_id, world_comm)
+  CALL mp_bcast (n_r           , meta_ionode_id, world_comm)
+
   !
   ! characters
   !
