@@ -175,14 +175,9 @@
   nomega = INT((omegamax - omegamin)/omegastep) + 1
 
   ! 300 K                                                                                                                                        
-  ! WRONG? C = 4 * pi^2 * 2 *2^2 / (nr * 137*2)                                                                                                         
-  ! WRONG? C = 16 pi^2/137 * 1/nr = 1.1523518/nr  
-  ! CORRECT C = 4*pi^2*e^2 / (n_r c m_e^2) * 2 = 4 * pi^2 * 2 *2^2 *2 / (nr * 137*2) = 32/ (nr*137) = 2*1.15235180919/n_r
+  ! C = 4*pi^2*e^2 / (n_r c m_e^2) * 2 = 4 * pi^2 * 2 *2^2 *2 / (nr * 137*2) = 32/ (nr*137) = 2*1.15235180919/n_r
 
   cfac = two*1.15235180919/n_r 
-
-
-
 
   ! 
   IF (iq .EQ. 1) THEN
